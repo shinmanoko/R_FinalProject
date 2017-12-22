@@ -1,0 +1,344 @@
+---
+title: "R_FinalProject_YixuanLI"
+author: "LI_Yixuan"
+date: "2017/12/19"
+output: html_document
+---
+
+```{r}
+source("Fonctions.R")
+library(car)
+library(MASS)
+library(ggplot2)
+`%>%` <- magrittr::`%>%`
+```
+
+
+
+# Lecture of the dataset
+
+We use the dataset downloaded from Google patent, wuth the descriptions and unuseful coloums cleaned by command line for limiting its size. It finally contains 5,568,814 exemples of granted patent in total, from 5 fields (Chemistry, Electrical engineering, Instruments, Mechanical engineering and Other fields), ranging from 1976 to the year passed.
+
+
+```{r}
+data <- read.table(file = 'patent_utility_wipo.tsv', sep = '\t', header = TRUE, quote=NULL)
+data$year <- as.numeric(as.character(data$year))
+data$wipo_field <-as.character(data$wipo_field)
+```
+
+
+As being warned "NAs introduced by coercion", we check the completeness of the dataset.
+(If it occurs that it contains invalide values, we clean the dataset by removing these rows with the function `na.omit()`)
+
+
+```{r}
+sum(complete.cases(data))
+library(mice) 
+md.pattern(data)  
+library("VIM")  
+aggr(data, prop=FALSE,numbers=TRUE)
+
+#data <- na.omit(data)
+
+#View(data)
+```
+
+
+
+
+# Description of the dataset
+
+
+```{r}
+ggplot2::ggplot(data, ggplot2::aes(x=wipo_field)) +
+  ggplot2::geom_bar(fill="white", colour="black") +
+  ggplot2::labs(title="Number of granted patents grouped by field")
+
+ggplot2::ggplot(data, ggplot2::aes(x=year)) +
+  ggplot2::geom_bar(fill="pink", colour="black") +
+  ggplot2::labs(title="Number of granted patents per year")
+```
+
+
+### For each field:
+
+```{r}
+EE <- data0 %>%
+  dplyr::filter(wipo_field=="Electrical engineering")
+#print(EE)
+I <- data0 %>%
+  dplyr::filter(wipo_field=="Instruments")
+#print(I)
+C <- data0 %>%
+  dplyr::filter(wipo_field=="Chemistry")
+#print(C)
+ME <- data0 %>%
+  dplyr::filter(wipo_field=="Mechanical engineering")
+#print(ME)
+O <- data0 %>%
+  dplyr::filter(wipo_field=="Other fields")
+#print(O)
+```
+
+```{r}
+ggplot2::ggplot(EE, ggplot2::aes(x=year)) +
+  ggplot2::geom_bar(fill="red", colour="black")+
+  ggplot2::labs(title="Electrical engineering: Number of granted patents per year")
+
+ggplot2::ggplot(I, ggplot2::aes(x=year)) +
+  ggplot2::geom_bar(fill="yellow", colour="black")+
+  ggplot2::labs(title="Instruments: Number of granted patents per year")
+
+ggplot2::ggplot(C, ggplot2::aes(x=year)) +
+  ggplot2::geom_bar(fill="green", colour="black")+
+  ggplot2::labs(title="Chemistry: Number of granted patents per year")
+
+ggplot2::ggplot(ME, ggplot2::aes(x=year)) +
+  ggplot2::geom_bar(fill="blue", colour="black")+
+  ggplot2::labs(title="Mechanical engineering: Number of granted patents per year")
+
+ggplot2::ggplot(O, ggplot2::aes(x=year)) +
+  ggplot2::geom_bar(fill="purple", colour="black")+
+  ggplot2::labs(title="Other fields: Number of granted patents per year")
+```
+
+
+From here we notice already a difference in trends for the five WIPO fields. They can be throuthly divided into two groups: `Electrival engineering` and `Instruments` have more similar graphes with a obvious trend to grow, while the other three don't. This could means at the same time distributions according to fields could differ from each other in different years.
+
+
+
+
+# Hypothesis
+
+
+As observed above, the number of granted patents varies according to years for each field, and the five graphs have different trends. The question is whether these distributions really differ one to another ? Based on which we etablish two hypothesis:
+
+**H0: The distribution of the number of granted patents remains the same for different years**
+
+**H1: The distribution of the number of granted patents is not all the same for different years**
+
+
+In order to examine our hypothesis, before all the tests and analysis, we need to reconsruct the dataframe:
+
+
+```{r}
+ttt <- data %>%
+  dplyr::group_by(year,wipo_field) %>%
+  dplyr::summarize(total=n()) %>%
+  dplyr::ungroup()
+#print(ttt)
+```
+
+
+```{r}
+ggplot2::ggplot(ttt,aes(x=year,y=total))+
+  ggplot2::geom_bar(aes(fill=wipo_field), stat = "identity", position="stack")
+```
+
+
+
+# Chi-squared Test
+
+Firstly, we consider the *wipo_field* and *year* as two categorical 
+We transform it into the contingency table by `xtabs()`:
+
+```{r}
+tx <- xtabs(ttt$total~ttt$year+ttt$wipo_field)
+print(tx)
+```
+
+
+Then we just apply the two-way Chi-Squared Test of independance with the build-in function of R `chisq.test()`:
+
+```{r}
+chisq.test(tx)
+```
+
+As observed in the result, the `p-value < 2.2e-16` corresponding to a very small value which is smaller then 0.05.
+Thus, we can reject the H0 and show that the `wipo_field` is not independant of `year`.
+
+This chi-squared value prouve the association existing between these two variables. But we wonder also exactly which are the categories really have some effects from the year. For examining in more detail, we trun to the log linear analysis that allows us to tease apart these effects.
+
+
+
+
+# Log Linear Analysis with categorical simulus variable
+
+
+Here using the `glm()` function to etablish the prediction model for multiclass classification, we don't distinct the dependant variable and the independant variable. Instead, we model the dataset with the distribution of count of patents. Having the count variable we think first of the poisson distribution. The categorical factor `wipo_field` has 5 levels: Chemistry, Electrical engineering, Instruments, Mechanical engineering and Other fields. The discrete variable `year` is treat as quantitative, as it establish different models when it's treated as quantitative and as qualifiactive.
+
+It needs to test the overdispersion first for the poisson distribution that requires a radio mean/variance equals to 1. `qcc.overdispersion.test()` function from `qcc` package helps with this:
+
+```{r}
+qcc::qcc.overdispersion.test(ttt$total,type = "poisson")
+```
+
+The p-value too small accepts the hypothesis that there exists actually the overdispersion. So we use `family=quasipoisson()` or `glm.nb()` from the package `MASS` instead to fit our dataset.
+
+
+Having both of our variables as categorical, it's difficult to apply the same permutation test as in class in order to prouve the interaction. What we're going to do here is simply a comparison between the model with or without the interaction effect, the factor `year:wipo_field` in this case.
+
+More concretely, we build two models, one saturated considering that the intersection is nonempty, the other in contrast without this intersection between `wipo_field` and `year`.
+
+
+### 1. Saturated model
+
+```{r}
+ttt$year <- as.numeric(ttt$year)
+#glm.model1 = glm(total~year*wipo_field, family=quasipoisson(), data=ttt)
+glm.model1 = MASS::glm.nb(total~year*wipo_field, data=ttt)
+summary(glm.model1)
+anova(glm.model1, test="Chisq")
+#step(glm.model1, direction="backward")
+#plot(glm.model1)
+```
+
+
+In the summary, we see that all factors have very small p-value except that containing `wipo_fieldInstruments`, `wipo_fieldElectrical engineering` and `wipo_fieldChemistry`. On the other hand, `wipo_fieldElectrical engineering` and `wipo_fieldInstruments`, together with their interaction with `year`, are the effects have a significant influence on the independant variable.
+
+Similarly, with a analysis of Deviance Table, it's clear that each of these three effects have contributed to decrease the deviance that presents the error in fitting the model.
+
+
+Already having some evidences prouving the existence of the association, now we test it with a scond model:
+
+Basically, if we remove all the interaction terms that involve both of the variables whose interaction we want to test, and the model still fits the observed frequencies adequately, then we can conclude that these two are really unrelated. 
+
+`update()` is a convinient way to build a new model with certain changes in factors.
+
+
+### 2. Model without interaction
+
+```{r}
+glm.model2 =  update(glm.model1, . ~ . - year:wipo_field)
+summary(glm.model2)
+anova(glm.model2, test="Chisq")
+#plot(glm.model2)
+```
+
+
+```{r}
+anova(glm.model1,glm.model2, test = "Chisq")
+```
+
+A statistic measurement wildely used to select the better model is the AIC (Akaike information criterion), which measures the relative quality of model fitting with the trade-off between the goodness of fit of the model and the simplicity of the model.
+
+Comparing the AIC value of our two models: AIC1 = 3881.2 and AIC2 = 4190.3. It's obvious that the second one fits better the dataset.
+
+
+Then we'd like to take a power test just in order to make sure this difference didn't come out because of the variablity. It's a simple permutation test like what we've done in class (and we just modified a little the script in the fuction sheet based on the code we use several weeks ago).
+
+```{r}
+source("Fonctions.R")
+nb <- nrow(ttt)
+p <- permutation_nb(ttt, nb)
+permutation_pvalue_twosided(p)
+```
+
+
+It gives a really small value of p, so we can easily reject that the result was caused by accident. There is a significant difference between the model with and without the interaction. This power test use permuted dataset of same size as the original one. We also try with smaller subdatasets:
+
+```{r}
+source("Fonctions.R")
+p <- permutation_nb(ttt, 10000)
+permutation_pvalue_twosided(p)
+```
+
+
+The test seems worked, still the warning "tests made without re-estimating 'theta'" concerns me, and I didn't succesfully figure out the rason of this kind of problems...
+
+So that we will try some others tests to confirm the hypothesis.
+
+
+
+
+# Linear Model with Gaussian distribution
+
+
+We'd like to try first with a logistic model based on normal distribution. Therefore, as we've discribed at the beginning, our data havs discrete response variable and simply dosen't follow a normal distribution. However, in this case, a normalized transformation could help.
+
+It's known that if we apply a linear transformation `y=f(x)` to a variable, without harming the analysis, it will give a distribution close to the Gaussian one. For a distribution with positive skewness like ours, some useful ways are taking the logarithme, the square or reciprocal. The first one works better here.
+
+To test how well it's been transformed to a normal distribution, we plot the `qq-plot`:
+
+
+```{r}
+hist(ttt$total,breaks=30)
+qqnorm(ttt$total)
+qqline(ttt$total, col="red")
+
+g <- log(ttt$total+1)
+h<-hist(g,breaks=30)
+xfit <- seq(min(g),max(g),length=500) ### 取要計算的x值
+yfit <- dnorm(xfit, mean=mean(g), sd=sd(g)) ### 假設是正態分布， 則對應的概率密度為 yfit
+yfit <- yfit*diff(h$mids[1:2])*length(g) ### 求x向量內每一個值與前面數值的差, 以確定在y方向上， 應該放大多少倍
+lines(xfit, yfit, col="blue", lwd=2)  ### 繪制曲線
+
+qqnorm(g)
+qqline(g, col="red")
+
+ttt0 <- ttt
+ttt0$total <- g
+```
+
+
+```{r}
+glm.model_nom1 = glm(total~year*wipo_field, data=ttt0)
+summary(glm.model_nom1)
+anova(glm.model_nom1, test="Chisq")
+#plot(glm.model_nom1)
+
+glm.model_nom2 =  update(glm.model_nom1, . ~ . - year:wipo_field)
+summary(glm.model_nom2)
+anova(glm.model_nom2, test="Chisq")
+#plot(glm.model_nom2)
+```
+
+
+Again with a power test:
+
+```{r}
+source("Fonctions.R")
+p <- permutation_norm(ttt)
+permutation_pvalue_twosided(p)
+```
+
+
+What we got from this new test corresponds a lot to the previous one: difference between models os always significant. And according to the deviance and AIC value, this model fits even better the dataset.
+
+
+
+
+# Mosaic Plot
+
+
+At the end, we can also take a look at the mosaic graph, which is a more visual way to give an overview of the data and to recognize relationships between different qualificative variables. Independence is shown when the boxes across categories all have the same areas, while denpendence is in contrust demonstrate by the sizes differ according to rows and columns.
+
+R has a function to plot the mosaic plot direactly, `mosaicplot()` with the option `shade=T`, also allow the comparison of the observed frenquency under each condtion to its expetation.
+
+
+```{r cache=T}
+mosaicplot(tx,shade=T)
+#library(vcd)
+#mosaic(tx,shade=TRUE)  
+```
+
+
+The fact is demonstrated that for each column (each year), the percentage is quite different across field. Among them three columns having less variaty in area are `Chemistry`, `Mechanical engineering` and `Other fields`. This observation correponds to ours first observation based on the different fields'histogram.
+
+
+
+
+# CONCLUSION
+
+
+Both the Chi-Squared Test and the Log Linear Analysis confirm the existence of an association (or interaction) between `wipo_field` and `year`. In another word, the distribution of pentent number according to `wipo_field` receives an impact from its period. 
+
+Thus, we reject the H0, and believe that the distribution of granted patents'number is not all the same for different years. However, the distribution didn't been prouved varying with years for all fields. This hypothesis based on the whole dataset may not bu true for some subdatasets.
+
+To test this new hypothesis, it needs to repeat analysis for each subdataset (each field) or redo a permutation test between pair like we did in class.
+
+
+
+
+
+
